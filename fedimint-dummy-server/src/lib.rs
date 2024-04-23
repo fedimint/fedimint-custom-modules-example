@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::string::ToString;
 
 use anyhow::bail;
 use async_trait::async_trait;
@@ -9,7 +8,7 @@ use fedimint_core::config::{
 };
 use fedimint_core::core::ModuleInstanceId;
 use fedimint_core::db::{
-    DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped, MigrationMap,
+    DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped, ServerMigrationFn,
 };
 use fedimint_core::module::audit::Audit;
 use fedimint_core::module::{
@@ -25,8 +24,9 @@ use fedimint_dummy_common::config::{
 use fedimint_dummy_common::{
     broken_fed_public_key, fed_public_key, DummyCommonInit, DummyConsensusItem, DummyInput,
     DummyInputError, DummyModuleTypes, DummyOutput, DummyOutputError, DummyOutputOutcome,
-    CONSENSUS_VERSION,
+    MODULE_CONSENSUS_VERSION,
 };
+use fedimint_server::config::CORE_CONSENSUS_VERSION;
 use futures::{FutureExt, StreamExt};
 use strum::IntoEnumIterator;
 
@@ -35,16 +35,16 @@ use crate::db::{
     DummyOutcomePrefix,
 };
 
-mod db;
+pub mod db;
 
 /// Generates the module
 #[derive(Debug, Clone)]
 pub struct DummyInit;
 
 // TODO: Boilerplate-code
-#[async_trait]
 impl ModuleInit for DummyInit {
     type Common = DummyCommonInit;
+    const DATABASE_VERSION: DatabaseVersion = DatabaseVersion(1);
 
     /// Dumps all database items for debugging
     async fn dump_database(
@@ -91,27 +91,26 @@ impl ModuleInit for DummyInit {
 #[async_trait]
 impl ServerModuleInit for DummyInit {
     type Params = DummyGenParams;
-    const DATABASE_VERSION: DatabaseVersion = DatabaseVersion(1);
 
     /// Returns the version of this module
     fn versions(&self, _core: CoreConsensusVersion) -> &[ModuleConsensusVersion] {
-        &[CONSENSUS_VERSION]
+        &[MODULE_CONSENSUS_VERSION]
     }
 
     fn supported_api_versions(&self) -> SupportedModuleApiVersions {
-        SupportedModuleApiVersions::from_raw((u32::MAX, 0), (0, 0), &[(0, 0)])
+        SupportedModuleApiVersions::from_raw(
+            (CORE_CONSENSUS_VERSION.major, CORE_CONSENSUS_VERSION.minor),
+            (
+                MODULE_CONSENSUS_VERSION.major,
+                MODULE_CONSENSUS_VERSION.minor,
+            ),
+            &[(0, 0)],
+        )
     }
 
     /// Initialize the module
     async fn init(&self, args: &ServerModuleInitArgs<Self>) -> anyhow::Result<DynServerModule> {
         Ok(Dummy::new(args.cfg().to_typed()?).into())
-    }
-
-    /// DB migrations to move from old to newer versions
-    fn get_database_migrations(&self) -> MigrationMap {
-        let mut migrations = MigrationMap::new();
-        migrations.insert(DatabaseVersion(0), move |dbtx| migrate_to_v1(dbtx).boxed());
-        migrations
     }
 
     /// Generates configs for all peers in a trusted manner for testing
@@ -126,9 +125,7 @@ impl ServerModuleInit for DummyInit {
             .iter()
             .map(|&peer| {
                 let config = DummyConfig {
-                    local: DummyConfigLocal {
-                        example: params.local.0.clone(),
-                    },
+                    local: DummyConfigLocal {},
                     private: DummyConfigPrivate,
                     consensus: DummyConfigConsensus {
                         tx_fee: params.consensus.tx_fee,
@@ -148,9 +145,7 @@ impl ServerModuleInit for DummyInit {
         let params = self.parse_params(params).unwrap();
 
         Ok(DummyConfig {
-            local: DummyConfigLocal {
-                example: params.local.0.clone(),
-            },
+            local: DummyConfigLocal {},
             private: DummyConfigPrivate,
             consensus: DummyConfigConsensus {
                 tx_fee: params.consensus.tx_fee,
@@ -176,6 +171,13 @@ impl ServerModuleInit for DummyInit {
         _config: ServerModuleConfig,
     ) -> anyhow::Result<()> {
         Ok(())
+    }
+
+    /// DB migrations to move from old to newer versions
+    fn get_database_migrations(&self) -> BTreeMap<DatabaseVersion, ServerMigrationFn> {
+        let mut migrations: BTreeMap<DatabaseVersion, ServerMigrationFn> = BTreeMap::new();
+        migrations.insert(DatabaseVersion(0), move |dbtx| migrate_to_v1(dbtx).boxed());
+        migrations
     }
 }
 
@@ -205,6 +207,11 @@ impl ServerModule for Dummy {
         _consensus_item: DummyConsensusItem,
         _peer_id: PeerId,
     ) -> anyhow::Result<()> {
+        // WARNING: `process_consensus_item` should return an `Err` for items that do
+        // not change any internal consensus state. Failure to do so, will result in an
+        // (potentially significantly) increased consensus history size.
+        // If you are using this code as a template,
+        // make sure to read the [`ServerModule::process_consensus_item`] documentation,
         bail!("The dummy module does not use consensus items");
     }
 

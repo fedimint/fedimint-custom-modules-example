@@ -19,10 +19,10 @@ async-trait = "0.1.73"
 bitcoin_hashes = "0.11.0"
 erased-serde = "0.3"
 futures = "0.3"
-fedimint-core ={ workspace = true }
+fedimint-core = { workspace = true }
 rand = "0.8"
-serde = { version = "1.0.149", features = [ "derive" ] }
-secp256k1 = "0.24.2"
+serde = { version = "1.0.149", features = ["derive"] }
+secp256k1 = { workspace = true }
 strum = "0.24"
 strum_macros = "0.24"
 thiserror = "1.0.39"
