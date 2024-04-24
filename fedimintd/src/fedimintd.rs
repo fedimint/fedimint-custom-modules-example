@@ -1,15 +1,17 @@
-use fedimintd::fedimintd::Fedimintd;
+use fedimint_core::core::ModuleKind;
+use fedimint_core::fedimint_build_code_version_env;
+use fedimint_dummy_common::config::DummyGenParams;
+use fedimint_dummy_server::DummyInit;
+use fedimintd::Fedimintd;
+
+const KIND: ModuleKind = ModuleKind::from_static_str("dummy");
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    Fedimintd::new()?
+    Fedimintd::new(fedimint_build_code_version_env!())?
         .with_default_modules()
-        .with_module(fedimint_dummy_server::DummyInit)
-        .with_extra_module_inits_params(
-            3,
-            fedimint_dummy_common::KIND,
-            fedimint_dummy_common::config::DummyGenParams::default(),
-        )
+        .with_module_kind(DummyInit)
+        .with_module_instance(KIND, DummyGenParams::default())
         .run()
         .await
 }

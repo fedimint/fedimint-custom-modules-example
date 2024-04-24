@@ -38,6 +38,7 @@ async fn setup() -> anyhow::Result<(ProcessManager, TaskGroup)> {
     let globals = vars::Global::new(
         Path::new(&env::var("FM_TEST_DIR")?),
         env::var("FM_FED_SIZE")?.parse::<usize>()?,
+        0,
     )
     .await?;
     let log_file = fs::OpenOptions::new()

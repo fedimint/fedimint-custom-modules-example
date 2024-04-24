@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use fedimint_client::sm::{DynState, State, StateTransition};
 use fedimint_client::DynGlobalClientContext;
-use fedimint_core::api::{GlobalFederationApi, OutputOutcomeError};
 use fedimint_core::core::{Decoder, IntoDynInstance, ModuleInstanceId, OperationId};
 use fedimint_core::db::{DatabaseTransaction, IDatabaseTransactionOpsCoreTyped};
 use fedimint_core::encoding::{Decodable, Encodable};
@@ -13,33 +12,33 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::debug;
 
-use crate::db::DummyClientFundsKeyV0;
+use crate::db::DummyClientFundsKeyV1;
 use crate::{get_funds, DummyClientContext};
 
 const RETRY_DELAY: Duration = Duration::from_secs(1);
 
 /// Tracks a transaction
-#[derive(Debug, Clone, Eq, PartialEq, Decodable, Encodable)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Decodable, Encodable)]
 pub enum DummyStateMachine {
     Input(Amount, TransactionId, OperationId),
     Output(Amount, TransactionId, OperationId),
     InputDone(OperationId),
     OutputDone(Amount, OperationId),
     Refund(OperationId),
+    Unreachable(OperationId, Amount),
 }
 
 impl State for DummyStateMachine {
     type ModuleContext = DummyClientContext;
-    type GlobalContext = DynGlobalClientContext;
 
     fn transitions(
         &self,
         context: &Self::ModuleContext,
-        global_context: &Self::GlobalContext,
+        global_context: &DynGlobalClientContext,
     ) -> Vec<StateTransition<Self>> {
         match self.clone() {
             DummyStateMachine::Input(amount, txid, id) => vec![StateTransition::new(
-                await_tx_accepted(global_context.clone(), id, txid),
+                await_tx_accepted(global_context.clone(), txid),
                 move |dbtx, res, _state: Self| match res {
                     // accepted, we are done
                     Ok(_) => Box::pin(async move { DummyStateMachine::InputDone(id) }),
@@ -69,6 +68,7 @@ impl State for DummyStateMachine {
             DummyStateMachine::InputDone(_) => vec![],
             DummyStateMachine::OutputDone(_, _) => vec![],
             DummyStateMachine::Refund(_) => vec![],
+            DummyStateMachine::Unreachable(_, _) => vec![],
         }
     }
 
@@ -79,22 +79,22 @@ impl State for DummyStateMachine {
             DummyStateMachine::InputDone(id) => *id,
             DummyStateMachine::OutputDone(_, id) => *id,
             DummyStateMachine::Refund(id) => *id,
+            DummyStateMachine::Unreachable(id, _) => *id,
         }
     }
 }
 
 async fn add_funds(amount: Amount, mut dbtx: DatabaseTransaction<'_>) {
     let funds = get_funds(&mut dbtx).await + amount;
-    dbtx.insert_entry(&DummyClientFundsKeyV0, &funds).await;
+    dbtx.insert_entry(&DummyClientFundsKeyV1, &funds).await;
 }
 
 // TODO: Boiler-plate, should return OutputOutcome
 async fn await_tx_accepted(
     context: DynGlobalClientContext,
-    id: OperationId,
     txid: TransactionId,
 ) -> Result<(), String> {
-    context.await_tx_accepted(id, txid).await
+    context.await_tx_accepted(txid).await
 }
 
 async fn await_dummy_output_outcome(
@@ -115,23 +115,21 @@ async fn await_dummy_output_outcome(
             Ok(_) => {
                 return Ok(());
             }
-            Err(OutputOutcomeError::Federation(e)) if e.is_retryable() => {
-                debug!(
-                    "Awaiting output outcome failed, retrying in {}s",
-                    RETRY_DELAY.as_secs_f64()
-                );
-                sleep(RETRY_DELAY).await;
-            }
-            Err(_) => {
+            Err(e) if e.is_rejected() => {
                 return Err(DummyError::DummyInternalError);
             }
+            Err(e) => {
+                e.report_if_important();
+                debug!(error = %e, "Awaiting output outcome failed, retrying");
+            }
         }
+        sleep(RETRY_DELAY).await;
     }
 }
 
 // TODO: Boiler-plate
 impl IntoDynInstance for DummyStateMachine {
-    type DynType = DynState<DynGlobalClientContext>;
+    type DynType = DynState;
 
     fn into_dyn(self, instance_id: ModuleInstanceId) -> Self::DynType {
         DynState::from_typed(instance_id, self)

@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use anyhow::bail;
 use fedimint_client::transaction::{ClientInput, ClientOutput, TransactionBuilder};
-use fedimint_core::api::GlobalFederationApi;
 use fedimint_core::config::ClientModuleConfig;
 use fedimint_core::core::{IntoDynInstance, ModuleKind, OperationId};
+use fedimint_core::db::mem_impl::MemDatabase;
 use fedimint_core::module::ModuleConsensusVersion;
 use fedimint_core::{sats, Amount, OutPoint};
 use fedimint_dummy_client::states::DummyStateMachine;
@@ -57,8 +57,9 @@ async fn client_ignores_unknown_module() {
     .unwrap();
     cfg.modules.insert(2142, extra_mod);
 
+    let db = MemDatabase::new().into();
     // Test that building the client worked
-    let _client = fed.new_client_with_config(cfg).await;
+    let _client = fed.new_client_with(cfg, db).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
