@@ -1,6 +1,6 @@
 [package]
 name = "fedimint-cli-custom"
-version = "0.2.1"
+version = "0.3.0"
 authors = ["The Fedimint Developers"]
 edition = "2021"
 description = "fedimint-cli with custom module set"
@@ -13,4 +13,8 @@ path = "src/main.rs"
 anyhow = "1.0.66"
 fedimint-cli = { workspace = true }
 fedimint-dummy-client = { path = "../fedimint-dummy-client" }
+fedimint-core = { workspace = true }
 tokio = { version = "1.25.0", features = ["full", "tracing"] }
+
+[build-dependencies]
+fedimint-build = { git = "https://github.com/fedimint/fedimint" }

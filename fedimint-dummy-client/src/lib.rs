@@ -4,16 +4,17 @@ use std::time::Duration;
 
 use anyhow::{anyhow, format_err, Context as _};
 use common::broken_fed_key_pair;
-use db::DbKeyPrefix;
+use db::{migrate_to_v1, migrate_to_v2, DbKeyPrefix, DummyClientFundsKeyV1, DummyClientNameKey};
+use fedimint_client::db::ClientMigrationFn;
 use fedimint_client::module::init::{ClientModuleInit, ClientModuleInitArgs};
 use fedimint_client::module::recovery::NoModuleBackup;
 use fedimint_client::module::{ClientContext, ClientModule, IClientModule};
 use fedimint_client::sm::{Context, ModuleNotifier};
 use fedimint_client::transaction::{ClientInput, ClientOutput, TransactionBuilder};
-use fedimint_client::DynGlobalClientContext;
-use fedimint_core::api::GlobalFederationApi;
 use fedimint_core::core::{Decoder, KeyPair, OperationId};
-use fedimint_core::db::{Database, DatabaseTransaction, IDatabaseTransactionOpsCoreTyped};
+use fedimint_core::db::{
+    Database, DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped,
+};
 use fedimint_core::module::{
     ApiVersion, CommonModuleInit, ModuleCommon, ModuleInit, MultiApiVersion, TransactionItemAmount,
 };
@@ -25,22 +26,20 @@ use fedimint_dummy_common::{
     fed_key_pair, DummyCommonInit, DummyInput, DummyModuleTypes, DummyOutput, DummyOutputOutcome,
     KIND,
 };
-use futures::{pin_mut, StreamExt};
+use futures::{pin_mut, FutureExt, StreamExt};
 use secp256k1::{PublicKey, Secp256k1};
 use states::DummyStateMachine;
 use strum::IntoEnumIterator;
 
-use crate::db::DummyClientFundsKeyV0;
-
 pub mod api;
-mod db;
+pub mod db;
 pub mod states;
 
 #[derive(Debug)]
 pub struct DummyClientModule {
     cfg: DummyClientConfig,
     key: KeyPair,
-    notifier: ModuleNotifier<DynGlobalClientContext, DummyStateMachine>,
+    notifier: ModuleNotifier<DummyStateMachine>,
     client_ctx: ClientContext<Self>,
     db: Database,
 }
@@ -106,7 +105,7 @@ impl ClientModule for DummyClientModule {
             return Err(format_err!("Insufficient funds"));
         }
         let updated = funds - amount;
-        dbtx.insert_entry(&DummyClientFundsKeyV0, &updated).await;
+        dbtx.insert_entry(&DummyClientFundsKeyV1, &updated).await;
 
         // Construct input and state machine to track the tx
         Ok(vec![ClientInput {
@@ -296,7 +295,7 @@ impl DummyClientModule {
             return Err(format_err!("Wrong account id"));
         }
 
-        dbtx.insert_entry(&DummyClientFundsKeyV0, &new_balance)
+        dbtx.insert_entry(&DummyClientFundsKeyV1, &new_balance)
             .await;
         dbtx.commit_tx().await;
         Ok(())
@@ -309,7 +308,7 @@ impl DummyClientModule {
 }
 
 async fn get_funds(dbtx: &mut DatabaseTransaction<'_>) -> Amount {
-    let funds = dbtx.get_value(&DummyClientFundsKeyV0).await;
+    let funds = dbtx.get_value(&DummyClientFundsKeyV1).await;
     funds.unwrap_or(Amount::ZERO)
 }
 
@@ -320,6 +319,7 @@ pub struct DummyClientInit;
 #[apply(async_trait_maybe_send!)]
 impl ModuleInit for DummyClientInit {
     type Common = DummyCommonInit;
+    const DATABASE_VERSION: DatabaseVersion = DatabaseVersion(2);
 
     async fn dump_database(
         &self,
@@ -334,13 +334,17 @@ impl ModuleInit for DummyClientInit {
         for table in filtered_prefixes {
             match table {
                 DbKeyPrefix::ClientFunds => {
-                    if let Some(funds) = dbtx.get_value(&DummyClientFundsKeyV0).await {
+                    if let Some(funds) = dbtx.get_value(&DummyClientFundsKeyV1).await {
                         items.insert("Dummy Funds".to_string(), Box::new(funds));
+                    }
+                }
+                DbKeyPrefix::ClientName => {
+                    if let Some(name) = dbtx.get_value(&DummyClientNameKey).await {
+                        items.insert("Dummy Name".to_string(), Box::new(name));
                     }
                 }
             }
         }
-
         Box::new(items.into_iter())
     }
 }
@@ -366,5 +370,20 @@ impl ClientModuleInit for DummyClientInit {
             client_ctx: args.context(),
             db: args.db().clone(),
         })
+    }
+
+    fn get_database_migrations(&self) -> BTreeMap<DatabaseVersion, ClientMigrationFn> {
+        let mut migrations: BTreeMap<DatabaseVersion, ClientMigrationFn> = BTreeMap::new();
+        migrations.insert(DatabaseVersion(0), move |dbtx, _, _, _, _| {
+            migrate_to_v1(dbtx).boxed()
+        });
+
+        migrations.insert(
+            DatabaseVersion(1),
+            move |_, module_instance_id, active_states, inactive_states, decoders| {
+                migrate_to_v2(module_instance_id, active_states, inactive_states, decoders).boxed()
+            },
+        );
+        migrations
     }
 }
