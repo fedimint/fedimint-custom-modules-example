@@ -85,14 +85,10 @@ use fedimintd::fedimintd::Fedimintd;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    Fedimintd::new()?
+    Fedimintd::new(fedimint_build_code_version_env!())?
         .with_default_modules()
-        .with_module(fedimint_dummy_server::DummyGen)
-        .with_extra_module_inits_params(
-            3,
-            fedimint_dummy_server::KIND,
-            fedimint_dummy_server::DummyGenParams::default(),
-        )
+        .with_module_kind(DummyInit)
+        .with_module_instance(KIND, DummyGenParams::default())
         .run()
         .await
 }
@@ -148,9 +144,9 @@ The fedimint dummy common module defines the types that are shared between the c
 ### `fedimint-dummy-server`
 
 The fedimint dummy server module defines the consensus items and transaction validation rules for the dummy module. The server is divided into two main parts: DummyGen for initialization and non-consensus functions, and Dummy for consensus-related functions and module operations.
-It interacts with a database to store and retrieve various types of data related to the dummy module.
+It interacts with a database to store and retrieve various types of data related to the dummy module using the `DatabaseTransaction` type to perform database operations.
 
-- DummyGen (Non-Consensus Functions): Implements the `ServerModuleInit` trait, providing methods for module initialization, database migrations, and configuration generation.
+- DummyGen (Non-Consensus Functions): Implements the `ServerModuleInit` trait, providing methods for module initialization, database migrations, and configuration generation and validation.
 - Dummy (Consensus and Module Operations): Implements the `ServerModule` trait, providing methods for processing consensus proposals, input and output transactions, and auditing. Handles the creation of consensus proposals for signing requests and processes incoming consensus items. Implements input and output processing, including fund transfers and fee calculations.
 
 ## Fedimint General ModuleArchitecture
