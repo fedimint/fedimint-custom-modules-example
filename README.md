@@ -149,7 +149,7 @@ It interacts with a database to store and retrieve various types of data related
 - DummyGen (Non-Consensus Functions): Implements the `ServerModuleInit` trait, providing methods for module initialization, database migrations, and configuration generation and validation.
 - Dummy (Consensus and Module Operations): Implements the `ServerModule` trait, providing methods for processing consensus proposals, input and output transactions, and auditing. Handles the creation of consensus proposals for signing requests and processes incoming consensus items. Implements input and output processing, including fund transfers and fee calculations.
 
-## Fedimint General ModuleArchitecture
+## Fedimint General Module Architecture
 
 Below is a diagram of the general architecture of a fedimint module and how it interacts with the rest of the fedimint system. Building fedimint modules can be a bit complicated, so again please reach out to us on our [Developer Discord](https://discord.gg/cEVEmqCgWG) if you have any questions. We're always happy to help!
 
