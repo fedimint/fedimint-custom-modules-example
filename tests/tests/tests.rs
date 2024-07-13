@@ -15,7 +15,7 @@ async fn starter_test() -> anyhow::Result<()> {
 
     let DevFed { fed, .. } = dev_fed(&process_mgr).await?;
 
-    let init_bal = fed.client_balance().await?;
+    let init_bal = fed.internal_client().balance().await?;
     assert_eq!(init_bal, 0);
 
     cmd!(
@@ -28,7 +28,7 @@ async fn starter_test() -> anyhow::Result<()> {
     .run()
     .await?;
 
-    let final_bal = fed.client_balance().await?;
+    let final_bal = fed.internal_client().balance().await?;
     assert_eq!(final_bal, 1500);
 
     Ok(())
